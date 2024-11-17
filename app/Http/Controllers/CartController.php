@@ -9,7 +9,6 @@ use Illuminate\Support\Facades\Auth;
 
 class CartController extends Controller
 {
-
     public function add(Request $request)
     {
         $request->validate([
@@ -17,23 +16,17 @@ class CartController extends Controller
             'quantity' => 'required|integer|min:1',
         ]);
 
-
         $user = Auth::user();
-
 
         $cart = $user->cart ?? Cart::create(['user_id' => $user->id]);
 
 
-        $cartItem = CartItem::where('cart_id', $cart->id)
-            ->where('product_id', $request->product_id)
-            ->first();
+        $cartItem = $cart->items()->where('product_id', $request->product_id)->first();
 
         if ($cartItem) {
-            $cartItem->quantity += $request->quantity;
-            $cartItem->save();
+            $cartItem->increment('quantity', $request->quantity);
         } else {
-            CartItem::create([
-                'cart_id' => $cart->id,
+            $cart->items()->create([
                 'product_id' => $request->product_id,
                 'quantity' => $request->quantity,
             ]);
@@ -41,7 +34,7 @@ class CartController extends Controller
 
         return response()->json([
             'message' => 'Product added to cart',
-            'cart' => $cart->load('items'),
+            'cart' => $this->formatCart($cart),
         ], 200);
     }
 
@@ -52,33 +45,20 @@ class CartController extends Controller
             'quantity' => 'required|integer|min:1',
         ]);
 
-        $user = Auth::user();
+        $cart = $this->getUserCart();
 
-        $cart = $user->cart;
-
-        if (!$cart) {
-            return response()->json([
-                'message' => 'Cart not found',
-            ], 404);
-        }
-
-        $cartItem = CartItem::where('cart_id', $cart->id)
-            ->where('product_id', $request->product_id)
-            ->first();
+        $cartItem = $cart->items()->where('product_id', $request->product_id)->first();
 
         if ($cartItem) {
-            $cartItem->quantity = $request->quantity;
-            $cartItem->save();
+            $cartItem->update(['quantity' => $request->quantity]);
 
             return response()->json([
                 'message' => 'Product updated in cart',
-                'cart' => $cart->load('items'),
+                'cart' => $this->formatCart($cart),
             ], 200);
         }
 
-        return response()->json([
-            'message' => 'Product not found in cart',
-        ], 404);
+        return response()->json(['message' => 'Product not found in cart'], 404);
     }
 
     public function remove(Request $request)
@@ -87,31 +67,41 @@ class CartController extends Controller
             'product_id' => 'required|integer|exists:products,id',
         ]);
 
-        $user = Auth::user();
+        $cart = $this->getUserCart();
 
-        $cart = $user->cart;
-
-        if (!$cart) {
-            return response()->json([
-                'message' => 'Cart not found',
-            ], 404);
-        }
-
-        $cartItem = CartItem::where('cart_id', $cart->id)
-            ->where('product_id', $request->product_id)
-            ->first();
+        $cartItem = $cart->items()->where('product_id', $request->product_id)->first();
 
         if ($cartItem) {
             $cartItem->delete();
 
             return response()->json([
                 'message' => 'Product removed from cart',
-                'cart' => $cart->load('items'),
+                'cart' => $this->formatCart($cart),
             ], 200);
         }
 
-        return response()->json([
-            'message' => 'Product not found in cart',
-        ], 404);
+        return response()->json(['message' => 'Product not found in cart'], 404);
+    }
+
+    protected function getUserCart()
+    {
+        $cart = Auth::user()->cart()->with('items.product')->first();
+        if (!$cart) {
+            abort(404, 'Cart not found');
+        }
+        return $cart;
+    }
+
+    protected function formatCart($cart)
+    {
+        return [
+            'id' => $cart->id,
+            'items' => $cart->items->map(fn($item) => [
+                'product_id' => $item->product_id,
+                'quantity' => $item->quantity,
+                'price' => $item->product->price ?? 0,
+            ]),
+        ];
     }
 }
+

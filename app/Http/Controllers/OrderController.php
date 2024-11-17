@@ -12,38 +12,18 @@ class OrderController extends Controller
 {
     public function placeOrder(Request $request)
     {
-
         $user = Auth::user();
-
-
-        $cart = Cart::where('user_id', $user->id)->first();
+        $cart = Cart::where('user_id', $user->id)->with('items.product')->first();
 
         if (!$cart || $cart->items->isEmpty()) {
-            return response()->json(['message' => 'Ваша корзина пуста.'], 400);
+            return response()->json(['message' => 'Cart empty.'], 400);
         }
 
-
-        $totalPrice = 0;
-        $items = [];
-
-        foreach ($cart->items as $cartItem) {
-            $product = $cartItem->product;
-            $totalPrice += $product->price * $cartItem->quantity;
-
-
-            $items[] = [
-                'product_id' => $product->id,
-                'quantity' => $cartItem->quantity,
-                'price' => $product->price,
-            ];
-        }
-
-
+        $totalPrice = $cart->items->sum(fn($item) => $item->product->price * $item->quantity);
 
         if ($totalPrice <= 0) {
-            return response()->json(['message' => 'Ошибка в расчетах общей стоимости заказа.'], 400);
+            return response()->json(['message' => 'Invalid total price'], 400);
         }
-
 
         $order = Order::create([
             'user_id' => $user->id,
@@ -52,29 +32,27 @@ class OrderController extends Controller
             'price' => $totalPrice,
         ]);
 
+        $orderItems = $cart->items->map(fn($item) => [
+            'order_id' => $order->id,
+            'product_id' => $item->product_id,
+            'quantity' => $item->quantity,
+            'price' => $item->product->price,
+        ])->toArray();
 
-        foreach ($items as $item) {
-            OrderItem::create([
-                'order_id' => $order->id,
-                'product_id' => $item['product_id'],
-                'quantity' => $item['quantity'],
-                'price' => $item['price'],
-            ]);
-        }
+        OrderItem::insert($orderItems);
 
-
-        $cart->items()->delete();
+        $cart->delete();
 
         return response()->json([
-            'message' => 'Заказ успешно создан.',
+            'message' => 'Order created successfully',
             'order' => $order,
         ], 201);
     }
 
-    public function userOrders(Request $request)
+    public function userOrders()
     {
-        $user = Auth::user();
-        $orders = $request->user()->orders()->with('item.product')->get();
-        return response()->json(['order' => $orders], 200);
+        $orders = Auth::user()->orders()->with('items.product')->get();
+        return response()->json(['orders' => $orders], 200);
     }
+
 }
